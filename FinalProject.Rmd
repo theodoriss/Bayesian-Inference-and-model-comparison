@@ -1,0 +1,853 @@
+---
+title: "SMDS-2-Final Project"
+author: "Theodoros Sofianos-1867968"
+date: "July 7, 2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Diabetes dataset: an in-depth fully Bayesian analysis.
+
+In this project, we will perform our analysis on the diabetes dataset(https://github.com/MateLabs/Public-Datasets/blob/master/Datasets/diabetes.csv). The dataset consists of 8 independent numerical variables and 1 binary response variable,whether the patient actually has  diabetes or not.
+
+
+```{r,warning=FALSE,message=FALSE}
+require(corrplot)
+
+
+data=read.csv('D:\\sapienza\\SDS2\\diabetes.csv')
+
+Y=ifelse(data$Class == "positive",1,0)
+
+data$Class<-NULL
+
+n<-length(Y)
+#data$Class<-Y
+
+
+sum(is.na(data))
+
+
+
+summary(data)
+
+
+
+par(mfrow=c(3,3))
+hist(main='number of pregnancies',data$Number.of.times.pregnant,xlab='Index',ylab='Density',col='blue')
+hist(main='plasma glucose concentration',data$Plasma.glucose.concentration,xlab='Index',ylab='Density',col='blue')
+hist(main='Diastolic blood pressure',data$Diastolic.blood.pressure,xlab='Index',ylab='Density',col='blue')
+hist(main='Triceps skin fold thickness',data$Triceps.skin.fold.thickness,xlab='Index',ylab='Density',col='blue')
+hist(main='X2 Hour serum insulin',data$X2.Hour.serum.insulin,xlab='Index',ylab='Density',col='blue')
+hist(main='Body mass index',data$Body.mass.index,xlab='Index',ylab='Density',col='blue')
+hist(main='Diabetes pedigree function',data$Diabetes.pedigree.function,xlab='Index',ylab='Density',col='blue')
+hist(main='Age',data$Age,xlab='Index',ylab='Density',col='blue')
+hist(main='Diabetes',Y,xlab='Index',ylab='Density',col='blue')
+
+
+par(mfrow=c(1,1))
+corrplot(cor(cbind(data,Y)),method = 'number')
+```
+Above, we can see the histograms of the independent variables and the correlations between them.We can observe that the highest correlation between variables is for the couple of Age-Number of pregnancies,something that intuitively makes sense.We can also see that the highest correlation for our response variable is with the variable Plasma glucose concentration.Furthermore,we can see that some of our independent variables have almost zero correlation with it,so it seems that we do not need all of the variables for our model.Since some of the independent variables of our dataset are hard to grasp without some medicine background and in order to deal with multicollinearity issues as well,we will perform a Principal Component Analysis of the dataset.
+
+**PCA**
+
+```{r,warning=FALSE,message=FALSE}
+require(dplyr)
+pca=prcomp(data,center = T,scale. = T)
+
+
+X= pca$x
+
+
+
+summary(pca)
+
+lr=glm(Y~as.matrix(X),family = 'binomial')
+
+summary(lr)
+
+X=select(as.data.frame(X),PC1,PC2,PC3,PC5,PC6)
+
+par(mfrow=c(3,2))
+hist(main='PC 1',X[,1],xlab='Index',ylab='Density',col='blue')
+hist(main='PC 2',X[,2],xlab='Index',ylab='Density',col='blue')
+hist(main='PC 3',X[,3],xlab='Index',ylab='Density',col='blue')
+hist(main='PC 5',X[,4],xlab='Index',ylab='Density',col='blue')
+hist(main='PC 6',X[,5],xlab='Index',ylab='Density',col='blue')
+```
+First of all, we see the importance of the 8 Principal Components. The first 5 components can 'explain' more than 80% of the total variance of the dataset.However, when fitting a logistic regression to these components, the component number 4 is not statistically significant,in contrast with the components 5 and 6, although it accounts for more than 10% of the total variance.Also, the component number 8 is statistically significant,although it accounts for 5% of the variance of the dataset.Based on these artifacts,we have decided to implement a logit model,with variables the Principal Components 1,2,3,5,6. We can see the histograms of the variables of our model in the graphic above.
+
+
+**Logit Model**
+
+
+**Frequentist approach:**
+
+Our response variable follows an i.i.d. bernoulli distribution,with probability $p_i$ for each patient i.The probability p can be calculated as: $p(i)= w_1+w_2*X_1(i)+w_3*X_2(i)+w_4*X_3(i)+w_5*X_4(i)+w_6*X_5(i),  where X_1(i)..X(5)(i)$ are the original data of patient i,projected along the Principal Components mentioned above. Since the output is binary, the equation above is wrapped in a Sigmoid,to output values between 0 and 1.In terms of matrices, we can rewrite the above equation as :$p=σ(X^TW)$
+The likelihood function is:
+$$ Pr(p|W)=\prod_{i=1}^{n}p(i)^{Y(i)}(1-p(i))^{1-Y(i)}$$ and can be written as log:
+$$\ln(Pr(p|W))= \sum_{i=1}^{n}Y(i)\ln\ p(i)+(1-Y(i)) \ln \ (1-p(i))$$, which is essentially the (minus) cross entropy loss of the logistic regression.
+
+
+```{r,warning=FALSE,message=FALSE}
+#MLE OF LINEAR MODEL
+
+require(pROC)
+
+
+sigmoid=function(a){
+  
+  return (1/(1+exp(-a)))
+}
+
+mle_log=function(theta){ #alpha,beta,gamma,tau
+
+  
+  
+  
+  x=cbind(X0=1,X)
+  
+  tau=sigmoid(theta%*%t(x))
+  
+  
+  sum(Y*log(tau)+(1-Y)*log(1-tau))
+  
+
+ 
+  
+}
+MLE<-optim(c(0.3,-0.10,0.05,0.05,-0.05,0.05),fn=mle_log,control=list(fnscale=-1),hessian = T) #MLE
+
+mle_fit_values=MLE$par[1]+MLE$par[2]*X[,1]+MLE$par[3]*X[,2]+MLE$par[4]*X[,3]+MLE$par[5]*X[,4]+MLE$par[6]*X[,5]
+
+
+lr=glm(Y~as.matrix(X),family = 'binomial')
+
+cat('parameters via optim of MLE function:',MLE$par,'parameters via glm function:',lr$coefficients)
+
+
+confint.default(lr)
+summary(lr)
+
+
+par(mfrow=c(1,2))
+par(pty='s')
+roc(Y,lr$fitted.values,plot = T)
+legend('topright',legend = 'GLM',cex=0.5)
+roc(Y,mle_fit_values,plot = T)
+legend('topright',legend = 'MLE',cex=0.5)
+
+```
+We can see that both methods produce simiar values for the parameters and almost identical ROC curves
+
+
+**MCMC**
+
+For our bayesian inference on the model described, we will use non-conjugate approach, so we have to resort to Jags in order to sample from the unknown posterion,using Markov Chains. We will also assume non informative priors. The code is below:
+
+```{r,warning=FALSE,message=FALSE}
+
+require(R2jags)
+require(statip)
+
+
+modelLogit <- function() {
+  # Likelihood
+  for(i in 1:n)
+  {
+    y[i] ~ dbern(p[i])
+    
+    logit(p[i]) <- theta[1] + theta[2]*X1[i] +theta[3]*X2[i]+theta[4]*X3[i]+theta[5]*X4[i]+theta[6]*X5[i]
+  }
+  
+  # Priors
+  theta[1] ~ dnorm(0, 1.0E-6)
+  for (i in 1:n_param+1)
+  {
+    theta[i] ~ dnorm(0, 1.0E-6)
+    
+  }
+}
+
+# Preparing data for JAGS -------------------------------------------------
+X1=X[,1]
+X2=X[,2]
+X3=X[,3]
+X4=X[,4]
+X5=X[,5]
+y=Y
+n=nrow(X)
+n_param=ncol(X)
+
+dat.jags <- list("X1", "X2", "X3", "X4", "X5", "y", "n","n_param")
+
+
+
+# Parameters --------------------------------------------------------------
+
+modLogit.params="theta"
+
+# Starting values
+modLogit.inits <- function(){
+  list("theta" = c(rnorm(1, 0, 1),rnorm(1, 0, 1),rnorm(1, 0, 1),rnorm(1, 0, 1),rnorm(1, 0, 1),rnorm(1, 0, 1))
+       )
+}
+
+
+# Run JAGS ----------------------------------------------------------------
+
+set.seed(123)
+modLogit.fit <- jags(data = dat.jags,                                    # DATA
+                      model.file = modelLogit, inits = modLogit.inits,          # MODEL
+                      parameters.to.save = modLogit.params,                  
+                      n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)      # MCMC
+
+
+modLogit.fit
+
+# We can observe that the point estimates of the parameters with the MCMC are close to the ones from the MLE.
+
+
+chainArray <- modLogit.fit$BUGSoutput$sims.array
+
+library(bayesplot)
+
+
+
+# Plots with BayesPlot
+#bayesplot::mcmc_combo(chainArray)
+bayesplot::mcmc_acf(chainArray)
+
+# Diagnostic with coda
+coda.fit <- as.mcmc(modLogit.fit)
+
+coda::geweke.plot(coda.fit)
+coda::gelman.plot(coda.fit)
+
+# we can see that the chains are good,although perhaps not optimal.
+
+
+# Manipulating the chain --------------------------------------------------------------
+
+chainMat <- modLogit.fit$BUGSoutput$sims.matrix
+
+# Point estimates
+(theta.hat.jags <- colMeans(chainMat))
+
+# Intervals
+cred <- 0.95
+(theta.ET.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+# What about the HPD?
+(theta.HPD.jags <- coda::HPDinterval(as.mcmc(chainMat)))
+
+
+
+cat('parameters via MCMC with original data are', theta.hat.jags[-1], 'parameters via MLE are:',MLE$par)
+
+
+#Error approximation
+errors=sapply(modLogit.fit$BUGSoutput$sd, function(x) x^2/(modLogit.fit$n.iter-1000))
+cat('approximation errors are ',errors$theta)
+
+# Parameter uncertainty
+cat('uncertainty for parameters',abs(modLogit.fit$BUGSoutput$sd$theta/theta.hat.jags[-1]))
+
+
+#Traceplot
+traceplot(as.mcmc(modLogit.fit))
+
+
+# Density plots
+plot(as.mcmc(modLogit.fit),density = T,trace = F)
+
+
+#Gelmna-Rubin Test
+
+gelman.diag(as.mcmc(modLogit.fit))
+#gelman.plot(as.mcmc(modLogit.fit))
+
+#Heidelberger-Welch Test
+heidel.diag(as.mcmc(modLogit.fit))
+
+
+#ROC curve of point estimates
+fit_values_MC=theta.hat.jags[-1][1]+theta.hat.jags[-1][2]*X[,1]+theta.hat.jags[-1][3]*X[,2]+theta.hat.jags[-1][4]*X[,3]+theta.hat.jags[-1][5]*X[,4]+theta.hat.jags[-1][6]*X[,5]
+roc(Y,fit_values_MC,plot=T)
+
+```
+
+The code above creates and simulates the Markov Chains and outputs their diagnostics,both visually and numerically. What concerns us first is to see whether the chains converge to a stationary distribution.Based on the R-hat values of the parameters,but also the traceplots and the autocorrelation plots, we can make this assumption.In order to check the convergence more formaly, we performed 2 type of tests, Gelman-Rubin and Heidelberger-Welch.
+
+**Gelman-Rubin Test**
+
+Synoptically,the Gelman-Rubin test checks convergence of MCMC output in which m>1
+ parallel chains are run with starting values that are overdispersed relative to the posterior distribution. Convergence is diagnosed when the chains have `forgotten' their initial values, and the output from all chains is indistinguishable. It is based a comparison of within-chain and between-chain variances, and is similar to a classical analysis of variance.The convergence diagnostic itself is a value for each parameter,with values substansially above 1 indicating lack of convergence.
+ 
+**Heidelberger-Welch Test**
+
+The Heidelberger-Welch test consists of 2 parts.The idea is to perfor multiple hypothesis in the chains to check if they have converged to the stationary distribution.It has the capability to discard a certain percentage of the chain and then re-perform the hypothesis test in the rest of tha chain.As far as the second part concerned,the ratio of half of the length of the credible interval of each chain,over its mean, is compared with a threshold value,suggested by the authors,and if it is higher than the threshold,then the chain must be updated for more iterations.
+
+Sometimes the visual diagnostics from the coda package are not so trivial to claim or not convergence.Thus,we will be using the tests mentioned above to make sure of the convergence,and hopefully confirm the visual intuition.
+Our parameters pass these tests, so it confirms the visual results.Furthermore,we can observe the posterior densities of our parameters, plus their point estimates and credible intervals.We can observe that both point estimates and the intervals are similar to the ones obtained via the Frequentist approach.Lastly,we can see the ROC curve of the point estimates.The ROC curve shows the sensitivity and specificity for the binary results of our model. We can pick any point on the curve,depending on our preference and our task,by finding the adequate threshold, that will map the output  of our model to 0 and 1.(0 if the probability is less than the threshold and 1 if it is larger than the threshold).
+
+
+**Simulate Data from Model hypothesis**
+
+Next, we will simulate the data,according to our model. More specifically, we will assume the variables follow a normal distribution,with mean=0 and sd=8. As our variables are the Principal Components,whose histograms can be found above, we will try a rather big value as standard deviation,so it includes outliers,which were not present in the original dataset.In this way, we will check the model's ability to recover its true parameters obtained with the real data.If it does, it means that both our model and our estimation technique are correct.
+
+```{r,warning=FALSE,message=FALSE}
+# Simulate data --------------------------------------------------------------------
+
+# Pick sample size
+N <- 1000
+
+X1 <- rnorm(N,0,8)
+X2 <- rnorm(N,0,8)
+X3 <- rnorm(N,0,8)
+X4 <- rnorm(N,0,8)
+X5 <- rnorm(N,0,8)
+# Since our variables are the scaled PCA components, the standard deviation of 8 is quite big and could include outliers.
+
+
+# Pick fixed values for the parameters of the model
+theta=c(-0.8823168, -0.797905, 0.4233801, 0.4912432, 0.4885728, 0.8516612)
+
+# Simulate response according to the model
+linpred <- theta[1] + theta[2]*X1 +theta[3]*X2+theta[4]*X3+theta[5]*X4+theta[6]*X5
+pis <- exp(linpred)/(1+exp(linpred))
+
+y=replicate(N,NA)
+for(i in 1:N){
+  y[i]=rbern(1,pis[i])
+}
+#y<-rbern(N,pis)
+
+dat <- data.frame(X1=X1, X2=X2,X3=X3,X4=X4,X5=X5,y=y)
+
+
+
+# MCMC inference ----------------------------------------------------------
+
+
+modelLogitSim <- function() {
+  # Likelihood
+  for(i in 1:n)
+  {
+    y[i] ~ dbern(p[i])
+    
+    logit(p[i]) <- theta[1] + theta[2]*X1[i] +theta[3]*X2[i]+theta[4]*X3[i]+theta[5]*X4[i]+theta[6]*X5[i]
+  }
+  
+  # Priors
+  theta[1] ~ dnorm(0, 1.0E-6)
+  for (i in 2:n_param)
+  {
+    theta[i] ~ dnorm(0, 1.0E-6)
+    
+  }
+} 
+  
+  # Preparing data for JAGS -------------------------------------------------
+X1=dat$X1
+X2=dat$X2
+X3=dat$X3
+X4=dat$X4
+X5=dat$X5
+y=dat$y
+n=nrow(dat)
+n_param=ncol(dat)
+  
+dat.jags <- list("X1", "X2", "X3", "X4", "X5", "y", "n","n_param")
+
+
+# Parameters --------------------------------------------------------------
+
+modLogitSim.params="theta"
+
+# Starting values
+modLogitSim.inits <- function(){
+  list("theta" = c(rnorm(n_param, 0, 0.1))
+  )
+}
+
+
+set.seed(123)
+modLogitSim.fit <- jags(data = dat.jags,                                    # DATA
+                      model.file = modelLogitSim, inits = modLogitSim.inits,          # MODEL
+                      parameters.to.save = modLogitSim.params,                  
+                      n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)      # MCMC
+
+
+
+
+
+modLogitSim.fit
+
+
+
+# Results and diagnostics -------------------------------------------------
+
+modLogitSim.fit
+modLogitSim.fit$BUGSoutput$summary
+
+chainArray <- modLogitSim.fit$BUGSoutput$sims.array
+
+# Plots with BayesPlot
+#bayesplot::mcmc_combo(chainArray)
+bayesplot::mcmc_acf(chainArray)
+
+# Diagnostic with coda
+coda.fit <- as.mcmc(modLogitSim.fit)
+
+coda::geweke.plot(coda.fit)
+coda::gelman.plot(coda.fit)
+
+# Manipulating the chain --------------------------------------------------------------
+
+chainMat <- modLogitSim.fit$BUGSoutput$sims.matrix
+
+
+# Point estimates
+(theta.hat_sim.jags <- colMeans(chainMat))
+
+# Intervals
+cred <- 0.95
+(theta.ET_sim.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+# What about the HPD?
+(theta.HPD_sim.jags <- coda::HPDinterval(as.mcmc(chainMat)))
+
+#Error approximation
+errors=sapply(modLogitSim.fit$BUGSoutput$sd, function(x) x^2/(modLogitSim.fit$n.iter-1000))
+cat('approximation errors are ',errors$theta)
+
+# Parameter uncertainty
+cat('uncertainty for parameters',abs(modLogitSim.fit$BUGSoutput$sd$theta/theta.hat_sim.jags[-1]))
+
+
+#Traceplot
+traceplot(as.mcmc(modLogitSim.fit))
+
+
+# Density plots
+plot(as.mcmc(modLogitSim.fit),density = T,trace = F)
+
+
+#Gelmna-Rubin Test
+
+gelman.diag(as.mcmc(modLogitSim.fit))
+#gelman.plot(as.mcmc(modLogit.fit))
+
+#Heidelberger-Welch Test
+heidel.diag(as.mcmc(modLogitSim.fit))
+
+
+
+#ROC Curve of point estimates
+
+X1=X[,1]
+X2=X[,2]
+X3=X[,3]
+X4=X[,4]
+X5=X[,5]
+
+
+
+mcmc_fit_values_sim=theta.hat_sim.jags[-1][1]+theta.hat_sim.jags[-1][2]*X[,1]+theta.hat_sim.jags[-1][3]*X[,2]+theta.hat_sim.jags[-1][4]*X[,3]+theta.hat_sim.jags[-1][5]*X[,4]+theta.hat_sim.jags[-1][6]*X[,5]
+
+
+roc(Y,exp(mcmc_fit_values_sim)/(exp(mcmc_fit_values_sim)+1),plot = T)
+
+```
+By running the MCMC with simulated data, we can notice that the model outputs similar point estimates and credible interval as the MCMC with the original data.Although the chains are not optimal and the convergence is not so obvious from the graphical illustrations,after performing the tests,we can conclude that the chains have converged and the model managed to recover its parameters and their intervals.We can also see the ROC curve of the point estimates, that has almost the same area under it for both original and simulated data.
+
+
+
+**Probit Model**
+
+We will propose a new model, similar to the previous one. The difference between a logit and a probit model is that logit uses a non-linear mapping(sigmoid) to values in the range of probabilities,ie[0,1].The probit model instead 
+ is written as $Pr(p|w)=\phi(X^TW)$, where Φ is the CDF of the standardized normal distribution. This again maps the ouptut into [0,1]. We will use the same Principal Components as in the first model as the variables of the Probit model.
+ 
+ 
+ 
+ 
+*Frequentist Approach*
+For the MLE method of the probit model, we will be using directly the glm function, that comes in handy with the p-values and confidence intervals of the parameters,since we do not really want to reinvent the wheel.
+```{r,warning=FALSE,message=FALSE}
+
+data=read.csv('D:\\sapienza\\SDS2\\diabetes.csv')
+
+
+Y=ifelse(data$Class == "positive",1,0)
+
+data$Class<-NULL
+
+n<-length(Y)
+#data$Class<-Y
+
+pca=prcomp(data,center = T,scale. = T)
+
+
+X= pca$x
+
+
+X=select(as.data.frame(X),PC1,PC2,PC3,PC5,PC6)
+
+
+
+lr=glm(Y~as.matrix(X),family = binomial(probit))
+
+
+roc(Y,lr$fitted.values,plot=T)
+summary(lr)
+confint.default(lr)
+```
+We can see that the MLE of the probit model returns a similar ROC curve, with the same area under it as with the logit model.
+
+**MCMC**
+
+```{r,warning=FALSE,message=FALSE}
+
+require(R2jags)
+require(statip)
+require(pROC)
+# MCMC --------------------------------------------------------------------
+modelProbit <- function() {
+  # Likelihood
+  for(i in 1:n)
+  {
+    y[i] ~ dbern(p[i])
+    
+    probit(p[i]) <- theta[1] + theta[2]*X1[i] +theta[3]*X2[i]+theta[4]*X3[i]+theta[5]*X4[i]+theta[6]*X5[i]
+  }
+  
+  # Priors
+  theta[1] ~ dnorm(0, 1.0E-6)
+  for (i in 1:n_param+1)
+  {
+    theta[i] ~ dnorm(0, 1.0E-6)
+    
+  }
+}
+
+# Preparing data for JAGS -------------------------------------------------
+X1=X[,1]
+X2=X[,2]
+X3=X[,3]
+X4=X[,4]
+X5=X[,5]
+y=Y
+n=nrow(X)
+n_param=ncol(X)
+
+dat.jags <- list("X1", "X2", "X3", "X4", "X5", "y", "n","n_param")
+
+
+
+# Parameters --------------------------------------------------------------
+
+modProbit.params="theta"
+
+# Starting values
+modProbit.inits <- function(){
+  list("theta" = rnorm(n_param+1)
+  )
+}
+
+
+# Run JAGS ----------------------------------------------------------------
+
+set.seed(123)
+modProbit.fit <- jags(data = dat.jags,                                    # DATA
+                      model.file = modelProbit, inits = modProbit.inits,          # MODEL
+                      parameters.to.save = modProbit.params,                  
+                      n.chains = 3, n.iter = 9000, n.burnin = 1000, n.thin=10)      # MCMC
+
+
+modProbit.fit
+
+
+
+
+chainArray <- modProbit.fit$BUGSoutput$sims.array
+
+
+# Plots with BayesPlot
+#bayesplot::mcmc_combo(chainArray)
+bayesplot::mcmc_acf(chainArray)
+
+# Diagnostic with coda
+coda.fit <- as.mcmc(modProbit.fit)
+
+coda::geweke.plot(coda.fit)
+coda::gelman.plot(coda.fit)
+
+# we can see that the chains are good,although perhaps not optimal.
+
+
+# Manipulating the chain --------------------------------------------------------------
+
+chainMat <- modProbit.fit$BUGSoutput$sims.matrix
+
+# Point estimates
+(theta.hat.jags <- colMeans(chainMat))
+
+# Intervals
+cred <- 0.95
+(theta.ET.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+# What about the HPD?
+(theta.HPD.jags <- coda::HPDinterval(as.mcmc(chainMat)))
+
+cat('parameters via MCMC with original data are', theta.hat.jags[-1], 'parameters via MLE are:',lr$coefficients)
+# We can observe that the point estimates of the parameters with the MCMC are close to the ones from the MLE.
+
+#Error approximation
+errors=sapply(modProbit.fit$BUGSoutput$sd, function(x) x^2/(modProbit.fit$n.iter-1000))
+cat('approximation errors are ',errors$theta)
+
+# Parameter uncertainty
+cat('uncertainty for parameters',abs(modProbit.fit$BUGSoutput$sd$theta/theta.hat.jags[-1]))
+
+#Traceplot
+traceplot(as.mcmc(modProbit.fit))
+
+
+# Density plots
+plot(as.mcmc(modProbit.fit),density = T,trace = F)
+
+
+#Gelmna-Rubin Test
+
+gelman.diag(as.mcmc(modProbit.fit))
+#gelman.plot(as.mcmc(modLogit.fit))
+
+#Heidelberger-Welch Test
+heidel.diag(as.mcmc(modProbit.fit))
+
+
+
+# ROC CURVES OF POINT ESTIMATES
+
+
+par(mfrow=c(2,1))
+fit_values_MC=theta.hat.jags[-1][1]+theta.hat.jags[-1][2]*X[,1]+theta.hat.jags[-1][3]*X[,2]+theta.hat.jags[-1][4]*X[,3]+theta.hat.jags[-1][5]*X[,4]+theta.hat.jags[6]*X[,5]
+roc(Y,fit_values_MC,plot=T)
+legend('topright',cex = 0.5,legend = 'MCMC')
+roc(Y,lr$fitted.values,plot=T)
+legend('topright',cex = 0.5,legend = 'MLE')
+
+```
+We see that our chains successfully converged to the stationary distribution. The point estimates and the intervals are identical with the ones we obtained with the MLE method,something that is depicted also in the ROC curves. Now, what remains to be done is to check the ability of the probit model to recover its true parameters, when the data are simulated. If it succeeds in it, we will be comparing our 2 models, in terms of DIC.
+
+*Simulate Data from Model hypothesis*
+
+```{r,warning=FALSE,message=FALSE}
+# MCMC SIMULATED DATA -----------------------------------------------------
+
+
+
+N <- 1000
+
+X1 <- rnorm(N,0,8)
+X2 <- rnorm(N,0,8)
+X3 <- rnorm(N,0,8)
+X4 <- rnorm(N,0,8)
+X5 <- rnorm(N,0,8)
+# Since our variables are the scaled PCA components, the standard deviation of 8 is quite big and could include outliers.
+
+
+# Pick fixed values for the parameters of the model
+theta=c(-0.5217235, -0.452429, 0.2557826, 0.2678606, 0.2603645, 0.4959219)
+
+# Simulate response according to the model
+linpred <- theta[1] + theta[2]*X1 +theta[3]*X2+theta[4]*X3+theta[5]*X4+theta[6]*X5
+pis <- pnorm(linpred)
+
+y=replicate(N,NA)
+for(i in 1:N){
+  y[i]=rbern(1,pis[i])
+}
+#y<-rbern(N,pis)
+
+dat <- data.frame(X1=X1, X2=X2,X3=X3,X4=X4,X5=X5,y=y)
+
+
+
+# MCMC inference ----------------------------------------------------------
+
+
+
+library(R2jags)
+
+
+modelProbitSim <- function() {
+  # Likelihood
+  for(i in 1:n)
+  {
+    y[i] ~ dbern(p[i])
+    
+    probit(p[i]) <- theta[1] + theta[2]*X1[i] +theta[3]*X2[i]+theta[4]*X3[i]+theta[5]*X4[i]+theta[6]*X5[i]
+  
+  
+  }
+
+  
+  # Priors
+  theta[1] ~ dnorm(0, 1.0E-6)
+  for (i in 2:n_param)
+  {
+    theta[i] ~ dnorm(0, 1.0E-6)
+    
+  }
+} 
+
+# Preparing data for JAGS -------------------------------------------------
+X1=dat$X1
+X2=dat$X2
+X3=dat$X3
+X4=dat$X4
+X5=dat$X5
+y=dat$y
+n=nrow(dat)
+n_param=ncol(dat)
+
+dat.jags <- list("X1", "X2", "X3", "X4", "X5", "y", "n","n_param")
+
+
+# Parameters --------------------------------------------------------------
+
+modProbitSim.params=c("theta")
+
+# Starting values
+modProbitSim.inits <- function(){
+  list("theta" = c(rnorm(n_param, 0, 0.1))
+  )
+}
+
+
+set.seed(123)
+modProbitSim.fit <- jags(data = dat.jags,                                    # DATA
+                         model.file = modelProbitSim, inits = modProbitSim.inits,          # MODEL
+                         parameters.to.save = modProbitSim.params,                  
+                         n.chains = 4, n.iter = 9000, n.burnin = 1000, n.thin=10)      # MCMC
+# for 3 chains,9000,1000,20 seems to be the closest we can get to the stationary distribution
+
+
+# Results and diagnostics -------------------------------------------------
+
+modProbitSim.fit
+modProbitSim.fit$BUGSoutput$summary
+
+chainArray <- modProbitSim.fit$BUGSoutput$sims.array
+
+# Plots with BayesPlot
+#bayesplot::mcmc_combo(chainArray)
+bayesplot::mcmc_acf(chainArray)
+
+
+
+# Diagnostic with coda
+coda.fit <- as.mcmc(modProbitSim.fit)
+
+coda::geweke.plot(coda.fit)
+coda::gelman.plot(coda.fit)
+
+# Manipulating the chain --------------------------------------------------------------
+
+chainMat <- modProbitSim.fit$BUGSoutput$sims.matrix
+
+
+# Point estimates
+(theta.hat_sim.jags <- colMeans(chainMat))
+
+
+# Intervals
+cred <- 0.95
+(theta.ET_sim.jags <- apply(chainMat, 2, quantile, prob=c((1-cred)/2, 1-(1-cred)/2)))
+
+# What about the HPD?
+(theta.HPD_sim.jags <- coda::HPDinterval(as.mcmc(chainMat)))
+
+cat('parameters via MCMC with original data are', theta, 'parameters via MCMC with simulated data are:',theta.hat_sim.jags[-1])
+
+#Error approximation
+errors=sapply(modProbitSim.fit$BUGSoutput$sd, function(x) x^2/(modProbitSim.fit$n.iter-1000))
+cat('approximation errors are ',errors$theta)
+
+# Parameter uncertainty
+cat('uncertainty for parameters',abs(modProbitSim.fit$BUGSoutput$sd$theta/theta.hat_sim.jags[-1]))
+
+
+#Traceplot
+traceplot(as.mcmc(modProbitSim.fit))
+
+
+# Density plots
+plot(as.mcmc(modProbitSim.fit),density = T,trace = F)
+
+
+#Gelmna-Rubin Test
+
+gelman.diag(as.mcmc(modProbitSim.fit))
+#gelman.plot(as.mcmc(modLogit.fit))
+
+#Heidelberger-Welch Test
+heidel.diag(as.mcmc(modProbitSim.fit))
+
+
+
+
+#ROC Curve of point estimates
+
+X1=X[,1]
+X2=X[,2]
+X3=X[,3]
+X4=X[,4]
+X5=X[,5]
+#re-plug the original data
+
+
+mcmc_fit_values_sim=theta.hat_sim.jags[-1][1]+theta.hat_sim.jags[-1][2]*X[,1]+theta.hat_sim.jags[-1][3]*X[,2]+theta.hat_sim.jags[-1][4]*X[,3]+theta.hat_sim.jags[-1][5]*X[,4]+theta.hat_sim.jags[-1][6]*X[,5]
+
+
+roc(Y,pnorm(mcmc_fit_values_sim),plot = T)
+
+```
+Although perhaps not optimal, our chains seem to converge,based on the plots, the R-hat values of the parameters and the tests we performed,similar as before.The confidence intervals for our parameters are small(the biggest interval is for the theta1 term).Our point estimates produce an ROC curve with similar area under the curve as for the one we got for the original data.
+
+**Model Comparison**
+We can conclude that both of our models are consistent, since we recover the same parameters for original and simulated data,with their point estimates and intervals similar to the ones we get by the Frequentist Inference. The logit model has a smaller pD penalty (22.4 vs 30.5 for the probit model),although both models have the same number of parameters.Furthermore, the DIC of the logit model is lower,not by a large margin though(760.3 vs 770.6).The Deviance Information Criterior (DIC) can be computed as:
+$$DIC = p_D + \bar{D} = \frac{1}{2}\widehat{var}(D(\theta)) -2log(L(y|\theta)) + C $$
+the smaller the DIC is for one model, the better...
+
+We can claim that the 1st model is marginally better than the second one,although we expect both of them to have predictive ability and perform similarly on unseen data.
+
+
+
+**References**
+
+- Heidelberger, P. and Welch, P.D. (1981). "A Spectral Method for Confidence Interval Generation and Run Length      Control in Simulations". Comm. ACM., 24, p. 233--245.
+
+- Gelman, A and Rubin, DB (1992) Inference from iterative simulation using multiple sequences, Statistical Science,  7, 457-511.
+
+- Ioannis Ntzoufras,(2011) "Bayesian Modeling Using WinBUGS",10-11
+ 
+- Peter D. Hoff, "A First Course in Bayesian Statistical Methods"
+
+
+
+
+
+
+
+
+
+
